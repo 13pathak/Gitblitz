@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitBlitz Settings</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <img src="icons/icon48.png" alt="GitBlitz" class="logo">
+            <h1>GitBlitz</h1>
+        </header>
+        <main>
+            <div class="input-group">
+                <label for="pat-input">GitHub Personal Access Token</label>
+                <input type="password" id="pat-input" placeholder="ghp_..." autocomplete="off">
+            </div>
+            <button id="save-btn" class="primary-btn">Save Token</button>
+            <p id="status-msg" class="status"></p>
+        </main>
+        <footer>
+            <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer">Generate Token (repo
+                scope)</a>
+        </footer>
+    </div>
+    <script src="popup.js"></script>
+</body>
+
+</html>

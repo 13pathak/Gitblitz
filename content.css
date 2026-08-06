@@ -1,0 +1,35 @@
+/* Content Script Injected Button Styles */
+.gitblitz-btn {
+    display: inline-flex;
+    /* Match GitHub button layout */
+    align-items: center;
+    justify-content: center;
+    padding: 3px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 20px;
+    white-space: nowrap;
+    vertical-align: middle;
+    cursor: pointer;
+    user-select: none;
+    background-color: #238636;
+    /* GitHub Green */
+    color: #ffffff;
+    border: 1px solid rgba(240, 246, 252, 0.1);
+    border-radius: 6px;
+    appearance: none;
+    text-decoration: none;
+    /* In case it's an a tag */
+    margin-left: 8px;
+    /* Spacing from other buttons */
+    box-shadow: 0 1px 0 rgba(27, 31, 36, 0.1);
+    transition: 0.2s cubic-bezier(0.3, 0, 0.5, 1);
+    transition-property: color, background-color, border-color;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+.gitblitz-btn:hover {
+    background-color: #2ea043;
+    border-color: rgba(240, 246, 252, 0.1);
+    text-decoration: none;
+}
