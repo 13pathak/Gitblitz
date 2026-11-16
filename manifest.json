@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "GitBlitz",
-  "version": "1.0",
-  "description": "Automate GitHub repository forking and cloning.",
+  "version": "1.1",
+  "description": "Create or reuse a GitHub fork and copy its clone command.",
   "permissions": [
     "storage",
     "scripting",
@@ -22,6 +22,15 @@
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
+    }
+  },
+  "commands": {
+    "fix-repo": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+G",
+        "mac": "Command+Shift+G"
+      },
+      "description": "Fork and copy the current repository’s clone command"
     }
   },
   "content_scripts": [

@@ -1,186 +1,175 @@
-// GitHub uses Turbo (formerly Turbolinks), so we need to observe page changes
-// and re-inject the button if it disappears.
-
 const BUTTON_ID = 'gitblitz-fix-btn';
+const BUTTON_LABEL = 'Fork & Copy Clone Command';
+let working = false;
+let scheduledInjection = false;
+let lastAnnouncement = '';
+
+chrome.runtime.onMessage.addListener((message) => {
+    if (message?.action === 'TRIGGER_FIX_REPO') {
+        document.getElementById(BUTTON_ID)?.click();
+    }
+});
+
+function repositoryContext() {
+    const parts = window.location.pathname.split('/').filter(Boolean);
+    if (parts.length < 2) return null;
+    try {
+        const [owner, repo] = parts.slice(0, 2).map(decodeURIComponent);
+        if (!/^[\w-]+$/.test(owner) || !/^[\w.-]+$/.test(repo)) return null;
+        const path = ['tree', 'blob'].includes(parts[2])
+            ? decodeURIComponent(parts.slice(3).join('/')) : '';
+        const selector = document.querySelector('[data-menu-button="branch-switcher"]') ||
+            document.querySelector('#ref-picker-repos-header-ref-selector [data-component="text"]') ||
+            document.querySelector('#branch-picker-repos-header-ref-selector [data-component="text"]');
+        const name = selector?.textContent.trim() || '';
+        return { owner, repo, ref: { path, name: name === 'Switch branches or tags' ? '' : name } };
+    } catch {
+        return null;
+    }
+}
+
+function findActionList() {
+    return document.querySelector('[data-testid="repo-header-actions"]') ||
+        document.querySelector('.pagehead-actions');
+}
 
 function injectButton() {
-    // 1. Check if we are on a repository page (contains /owner/repo)
-    // Avoids injecting on profile pages or dashboard
-    const pathParts = window.location.pathname.split('/').filter(p => p);
-    if (pathParts.length < 2) return;
+    if (!repositoryContext() || document.getElementById(BUTTON_ID)) return;
+    const actionList = findActionList();
+    if (!actionList) return;
 
-    // 2. Do not inject if already exists
-    if (document.getElementById(BUTTON_ID)) return;
+    const item = document.createElement('li');
+    const button = document.createElement('button');
+    button.id = BUTTON_ID;
+    button.type = 'button';
+    button.className = 'gitblitz-btn btn-sm btn';
+    button.textContent = BUTTON_LABEL;
+    button.setAttribute('aria-disabled', String(working));
+    button.addEventListener('click', handleClick);
+    item.appendChild(button);
+    actionList.insertBefore(item, actionList.firstChild);
+    ensureFeedback(actionList);
+}
 
-    // 3. Find the action bar (Star, Fork, Watch buttons)
-    // GitHub's structure varies, usually it's .pagehead-actions or #repository-details-container ul
-    // We'll target the main action list.
-    const actionList = document.querySelector('.pagehead-actions') ||
-        document.querySelector('ul.pagehead-actions');
+function ensureFeedback(actionList = findActionList()) {
+    let panel = document.getElementById('gitblitz-feedback');
+    if (panel) return panel;
+    if (!actionList) return null;
 
-    if (!actionList) {
-        // Maybe it's not loaded yet, or strictly not a repo header
-        return;
+    panel = document.createElement('div');
+    panel.id = 'gitblitz-feedback';
+    panel.className = 'gitblitz-feedback';
+    const status = document.createElement('p');
+    status.id = 'gitblitz-status';
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-atomic', 'true');
+    panel.appendChild(status);
+    const details = document.createElement('div');
+    details.id = 'gitblitz-details';
+    panel.appendChild(details);
+    // The current React header wraps its actions; put feedback on its own row.
+    const anchor = actionList.matches('[data-testid="repo-header-actions"]')
+        ? actionList.parentElement : actionList;
+    anchor.insertAdjacentElement('afterend', panel);
+    return panel;
+}
+
+function showFeedback(message, type = 'success', command = '') {
+    const panel = ensureFeedback();
+    if (!panel) return;
+    panel.dataset.type = type;
+    panel.classList.add('gitblitz-feedback-visible');
+    const status = panel.querySelector('#gitblitz-status');
+    // Repeated identical messages still need to be announced by screen readers.
+    const announcement = message === lastAnnouncement ? `${message}\u00a0` : message;
+    status.textContent = announcement;
+    lastAnnouncement = announcement;
+    const details = panel.querySelector('#gitblitz-details');
+    details.replaceChildren();
+    if (command) {
+        const label = document.createElement('label');
+        label.htmlFor = 'gitblitz-command';
+        label.textContent = 'Clone command';
+        const field = document.createElement('textarea');
+        field.id = 'gitblitz-command';
+        field.className = 'gitblitz-command';
+        field.readOnly = true;
+        field.rows = 2;
+        field.value = command;
+        field.addEventListener('focus', () => field.select());
+        details.append(label, field);
     }
-
-    // 4. Create the button li wrapper
-    const li = document.createElement('li');
-    li.id = BUTTON_ID;
-    li.className = 'tooltipped tooltipped-s';
-    li.setAttribute('aria-label', 'Fork & Clone with GitBlitz');
-
-    // 5. Create the actual button
-    const btn = document.createElement('button');
-    btn.className = 'gitblitz-btn btn-sm btn'; // Mix of my class + GitHub classes
-    btn.innerHTML = `
-        <span style="margin-right: 4px;">⚡</span> Fix This Repo
-    `;
-
-    // 6. Handle Click
-    btn.addEventListener('click', async (e) => {
-        e.preventDefault();
-
-        // Provide immediate visual feedback
-        const originalText = btn.innerHTML;
-        btn.innerHTML = `<span class="AnimatedEllipsis">Working</span>`;
-        btn.disabled = true;
-
-        // Send message to background
-        try {
-            chrome.runtime.sendMessage({
-                action: 'ACTION_FIX_REPO',
-                owner: pathParts[0],
-                repo: pathParts[1]
-            }, (response) => {
-                // Handle response
-                if (chrome.runtime.lastError) {
-                    alert(`GitBlitz Error: ${chrome.runtime.lastError.message}\n\nPlease check if the extension is properly loaded.`);
-                    resetButton(btn, originalText);
-                    return;
-                }
-
-                if (response && response.success) {
-                    // Copy to clipboard
-                    const cloneUrl = response.cloneUrl;
-                    const cloneCommand = `git clone ${cloneUrl}`;
-                    copyToClipboard(cloneUrl)
-                        .then(() => {
-                            btn.innerHTML = `✅ Copied!`;
-                            // Show success notification
-                            showNotification(`Copied: ${cloneCommand}`);
-                            // Reset after 3 seconds
-                            setTimeout(() => resetButton(btn, originalText), 3000);
-                        })
-                        .catch((err) => {
-                            console.error('Clipboard failed', err);
-                            btn.innerHTML = `⚠️ Copy Failed`;
-                            prompt("Manual Copy - Press Ctrl+C then Enter:", cloneCommand);
-                            setTimeout(() => resetButton(btn, originalText), 3000);
-                        });
-                } else {
-                    const msg = response ? response.error : 'Unknown error';
-                    // Provide helpful error messages
-                    let helpfulMsg = msg;
-                    if (msg.includes('Token')) {
-                        helpfulMsg = `${msg}\n\nPlease open the GitBlitz extension popup and set your GitHub token.`;
-                    } else if (msg.includes('rate limit')) {
-                        helpfulMsg = `${msg}\n\nPlease wait a few minutes before trying again.`;
-                    }
-                    alert(`GitBlitz Failed: ${helpfulMsg}`);
-                    resetButton(btn, originalText);
-                }
-            });
-        } catch (err) {
-            console.error(err);
-            alert(`GitBlitz Error: An unexpected error occurred.\n\n${err.message}`);
-            resetButton(btn, originalText);
-        }
+    const dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.className = 'gitblitz-dismiss';
+    dismiss.textContent = 'Dismiss';
+    dismiss.addEventListener('click', () => {
+        document.getElementById(BUTTON_ID)?.focus();
+        panel.classList.remove('gitblitz-feedback-visible');
+        status.textContent = '';
+        details.replaceChildren();
     });
-
-    li.appendChild(btn);
-    // Prepend or append? Usually Fork is last. Let's put it first for visibility.
-    actionList.insertBefore(li, actionList.firstChild);
+    details.appendChild(dismiss);
 }
 
-function resetButton(btn, html) {
-    btn.innerHTML = html;
-    btn.disabled = false;
-}
-
-function showNotification(message) {
-    // Create a temporary notification element
-    const notification = document.createElement('div');
-    notification.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        background-color: #238636;
-        color: white;
-        padding: 12px 16px;
-        border-radius: 6px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-        z-index: 9999;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        font-size: 14px;
-        animation: slideIn 0.3s ease-out;
-    `;
-    notification.textContent = message;
-    document.body.appendChild(notification);
-
-    // Remove after 3 seconds
-    setTimeout(() => {
-        notification.style.animation = 'slideOut 0.3s ease-in';
-        setTimeout(() => notification.remove(), 300);
-    }, 3000);
-}
-
-// Add animation styles
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideIn {
-        from {
-            transform: translateX(100%);
-            opacity: 0;
-        }
-        to {
-            transform: translateX(0);
-            opacity: 1;
-        }
+function buildCloneCommand(cloneUrl, branch) {
+    if (typeof cloneUrl !== 'string' || !/^(https:\/\/github\.com\/|git@github\.com:)[\w.-]+\/[\w.-]+\.git$/.test(cloneUrl)) {
+        throw new Error('GitHub returned an unexpected clone URL. Open your fork on GitHub and copy its URL.');
     }
-    @keyframes slideOut {
-        from {
-            transform: translateX(0);
-            opacity: 1;
-        }
-        to {
-            transform: translateX(100%);
-            opacity: 0;
-        }
+    // Keep copied commands safe in PowerShell, cmd.exe and POSIX shells.
+    // Unusual shell metacharacters must never become executable pasted input.
+    if (branch && !/^[\p{L}\p{N}._\/-]+$/u.test(branch)) {
+        throw new Error('This branch name contains shell-special characters. Copy its clone command from GitHub and quote the branch for your terminal.');
     }
-`;
-document.head.appendChild(style);
+    return `git clone${branch ? ` --branch ${branch}` : ''} -- ${cloneUrl}`;
+}
 
-// Modern Clipboard API - requires 'clipboardWrite' permission and secure context (HTTPS)
-async function copyToClipboard(text) {
+async function handleClick(event) {
+    event.preventDefault();
+    if (working) return;
+    // Capture repository and ref together before any asynchronous work or navigation.
+    const context = repositoryContext();
+    if (!context) return;
+    const pagePath = window.location.pathname;
+    working = true;
+    const button = event.currentTarget;
+    button.textContent = 'Preparing repository…';
+    button.setAttribute('aria-disabled', 'true');
+    button.setAttribute('aria-busy', 'true');
     try {
-        await navigator.clipboard.writeText(`git clone ${text}`);
-        // Also verify if we need to open Antigravity?
-        // For now just copy.
-    } catch (err) {
-        throw err;
+        const response = await chrome.runtime.sendMessage({ action: 'ACTION_FIX_REPO', ...context });
+        if (!response?.success) throw new Error(response?.error || 'GitBlitz did not receive a response. Reload this page and try again.');
+        if (window.location.pathname !== pagePath) return;
+        const command = buildCloneCommand(response.cloneUrl, response.branch);
+        try {
+            await navigator.clipboard.writeText(command);
+            showFeedback('Clone command copied.', 'success', command);
+        } catch {
+            showFeedback('Clipboard access failed. Select the command below and copy it manually.', 'error', command);
+        }
+    } catch (error) {
+        if (window.location.pathname === pagePath) {
+            showFeedback(error.message || 'GitBlitz could not prepare this repository. Reload the page and try again.', 'error');
+        }
+    } finally {
+        working = false;
+        for (const target of new Set([button, document.getElementById(BUTTON_ID)])) {
+            if (!target) continue;
+            target.textContent = BUTTON_LABEL;
+            target.setAttribute('aria-disabled', 'false');
+            target.removeAttribute('aria-busy');
+        }
     }
 }
 
-// Observer for SPA navigation
-const observer = new MutationObserver((mutations) => {
-    // Debounce or just check?
-    injectButton();
+// GitHub replaces its header during navigation. Batch mutation checks per frame.
+const observer = new MutationObserver(() => {
+    if (scheduledInjection) return;
+    scheduledInjection = true;
+    requestAnimationFrame(() => {
+        scheduledInjection = false;
+        injectButton();
+    });
 });
-
-observer.observe(document.body, {
-    childList: true,
-    subtree: true
-});
-
-// Initial run
+observer.observe(document.body, { childList: true, subtree: true });
 injectButton();

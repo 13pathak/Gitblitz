@@ -11,37 +11,48 @@
 <body>
     <div class="container">
         <header>
-            <img src="icons/icon48.png" alt="GitBlitz" class="logo">
+            <img src="icons/icon48.png" alt="" class="logo">
             <h1>GitBlitz</h1>
         </header>
         <main>
-            <div class="input-group">
-                <label for="pat-input">GitHub Personal Access Token</label>
-                <input type="password" id="pat-input" placeholder="ghp_..." autocomplete="off">
-            </div>
-            <div id="username-display" class="username-display"></div>
-            <div class="input-group">
-                <label>Clone URL Preference</label>
-                <div class="radio-group">
-                    <label class="radio-label">
-                        <input type="radio" name="clone-url" value="https" checked>
-                        <span>HTTPS</span>
-                    </label>
-                    <label class="radio-label">
-                        <input type="radio" name="clone-url" value="ssh">
-                        <span>SSH</span>
-                    </label>
+            <form id="token-form">
+                <div class="input-group">
+                    <label for="pat-input">GitHub Personal Access Token</label>
+                    <p id="token-help" class="help-text">Use a classic token with <code>public_repo</code> for public repositories, or <code>repo</code> for private ones. Your token stays in this browser’s extension storage.</p>
+                    <input type="password" id="pat-input" placeholder="ghp_... or github_pat_..." autocomplete="off" aria-describedby="token-help" required>
                 </div>
+                <div id="username-display" class="username-display"></div>
+                <fieldset class="input-group">
+                    <legend>Clone URL Preference</legend>
+                    <div class="radio-group">
+                        <label class="radio-label">
+                            <input type="radio" name="clone-url" value="https" checked>
+                            <span>HTTPS</span>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="clone-url" value="ssh">
+                            <span>SSH</span>
+                        </label>
+                    </div>
+                </fieldset>
+                <div class="button-group">
+                    <button id="save-btn" type="submit" class="primary-btn">Save Token</button>
+                    <button id="clear-btn" type="button" class="secondary-btn">Clear Token</button>
+                </div>
+                <p id="status-msg" class="status" role="status" aria-atomic="true"></p>
+            </form>
+
+            <div class="history-section">
+                <div class="history-header">
+                    <h2>Recent Forks</h2>
+                    <button id="clear-history" type="button" class="text-btn">Clear History</button>
+                </div>
+                <div id="fork-history" class="history-list"></div>
             </div>
-            <div class="button-group">
-                <button id="save-btn" class="primary-btn">Save Token</button>
-                <button id="clear-btn" class="secondary-btn">Clear</button>
-            </div>
-            <p id="status-msg" class="status"></p>
         </main>
         <footer>
-            <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer">Generate Token (repo
-                scope)</a>
+            <a href="https://github.com/settings/tokens/new?scopes=public_repo&amp;description=GitBlitz" target="_blank" rel="noopener noreferrer">Create a public-repository token</a>
+            <a href="https://docs.github.com/en/rest/repos/forks#create-a-fork" target="_blank" rel="noopener noreferrer">Fine-grained token permissions</a>
         </footer>
     </div>
     <script src="popup.js"></script>

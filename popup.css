@@ -4,7 +4,9 @@ body {
     background-color: #0d1117;
     /* GitHub Dark Dimmed */
     color: #c9d1d9;
-    width: 320px;
+    width: 360px;
+    max-width: 100vw;
+    color-scheme: dark;
     margin: 0;
     padding: 0;
 }
@@ -43,10 +45,33 @@ h1 {
     margin-bottom: 16px;
 }
 
-label {
+label, legend {
     font-size: 13px;
     font-weight: 500;
     color: #8b949e;
+}
+
+fieldset.input-group {
+    min-width: 0;
+    margin-inline: 0;
+    padding: 0;
+    border: 0;
+}
+
+legend {
+    margin-bottom: 8px;
+}
+
+.help-text {
+    margin: 0;
+    color: #a8b2be;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+:is(button, a, input):focus-visible {
+    outline: 2px solid #58a6ff;
+    outline-offset: 3px;
 }
 
 input[type="password"] {
@@ -106,8 +131,8 @@ input[type="password"]:focus {
 
 /* Buttons */
 .primary-btn {
-    width: 100%;
-    background-color: #238636;
+    flex: 1;
+    background-color: #1f7a31;
     color: #ffffff;
     border: 1px solid rgba(240, 246, 252, 0.1);
     border-radius: 6px;
@@ -119,7 +144,7 @@ input[type="password"]:focus {
 }
 
 .primary-btn:hover {
-    background-color: #2ea043;
+    background-color: #238636;
 }
 
 .primary-btn:active {
@@ -143,6 +168,7 @@ input[type="password"]:focus {
     font-weight: 500;
     cursor: pointer;
     transition: background-color 0.2s;
+    white-space: nowrap;
 }
 
 .secondary-btn:hover {
@@ -174,6 +200,90 @@ input[type="password"]:focus {
     color: #58a6ff;
 }
 
+/* History Section */
+.history-section {
+    margin-top: 20px;
+    border-top: 1px solid #30363d;
+    padding-top: 16px;
+}
+
+.history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.history-header h2 {
+    font-size: 14px;
+    font-weight: 600;
+    color: #c9d1d9;
+    margin: 0;
+}
+
+.text-btn {
+    min-height: 24px;
+    min-width: 24px;
+    background: none;
+    border: none;
+    color: #58a6ff;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 0;
+    text-decoration: none;
+}
+
+.text-btn:hover {
+    text-decoration: underline;
+}
+
+.history-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.history-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid #21262d;
+    font-size: 12px;
+    gap: 12px;
+}
+
+.history-item:last-child {
+    border-bottom: none;
+}
+
+.history-item .repo-name {
+    color: #c9d1d9;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.history-item .repo-name a {
+    color: #58a6ff;
+    text-decoration: none;
+}
+
+.history-item .repo-name a:hover {
+    text-decoration: underline;
+}
+
+.history-item .timestamp {
+    color: #8b949e;
+    font-size: 11px;
+    flex-shrink: 0;
+}
+
+.empty-history {
+    color: #8b949e;
+    font-size: 12px;
+    text-align: center;
+    padding: 16px 0;
+}
+
 /* Footer */
 footer {
     margin-top: 16px;
@@ -183,6 +293,8 @@ footer {
 }
 
 footer a {
+    display: block;
+    padding: 4px 0;
     color: #58a6ff;
     text-decoration: none;
     font-size: 12px;
@@ -193,3 +305,8 @@ footer a:hover {
 }
 
 /* End of Popup Styles */
+@media (prefers-reduced-motion: reduce) {
+    input, button {
+        transition: none;
+    }
+}

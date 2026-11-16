@@ -1,0 +1,16 @@
+{
+  "name": "gitblitz",
+  "version": "1.1.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/background.test.cjs tests/content.test.cjs",
+    "test:browser": "node tests/browser-check.cjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "axe-core": "4.14.0",
+    "playwright": "1.65.1"
+  }
+}
