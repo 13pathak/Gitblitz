@@ -19,7 +19,24 @@
                 <label for="pat-input">GitHub Personal Access Token</label>
                 <input type="password" id="pat-input" placeholder="ghp_..." autocomplete="off">
             </div>
-            <button id="save-btn" class="primary-btn">Save Token</button>
+            <div id="username-display" class="username-display"></div>
+            <div class="input-group">
+                <label>Clone URL Preference</label>
+                <div class="radio-group">
+                    <label class="radio-label">
+                        <input type="radio" name="clone-url" value="https" checked>
+                        <span>HTTPS</span>
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="clone-url" value="ssh">
+                        <span>SSH</span>
+                    </label>
+                </div>
+            </div>
+            <div class="button-group">
+                <button id="save-btn" class="primary-btn">Save Token</button>
+                <button id="clear-btn" class="secondary-btn">Clear</button>
+            </div>
             <p id="status-msg" class="status"></p>
         </main>
         <footer>

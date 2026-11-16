@@ -54,7 +54,7 @@ function injectButton() {
             }, (response) => {
                 // Handle response
                 if (chrome.runtime.lastError) {
-                    alert(`GitBlitz Error: ${chrome.runtime.lastError.message}`);
+                    alert(`GitBlitz Error: ${chrome.runtime.lastError.message}\n\nPlease check if the extension is properly loaded.`);
                     resetButton(btn, originalText);
                     return;
                 }
@@ -62,26 +62,37 @@ function injectButton() {
                 if (response && response.success) {
                     // Copy to clipboard
                     const cloneUrl = response.cloneUrl;
+                    const cloneCommand = `git clone ${cloneUrl}`;
                     copyToClipboard(cloneUrl)
                         .then(() => {
                             btn.innerHTML = `✅ Copied!`;
+                            // Show success notification
+                            showNotification(`Copied: ${cloneCommand}`);
                             // Reset after 3 seconds
                             setTimeout(() => resetButton(btn, originalText), 3000);
                         })
                         .catch((err) => {
                             console.error('Clipboard failed', err);
                             btn.innerHTML = `⚠️ Copy Failed`;
-                            prompt("Manual Copy:", cloneUrl);
+                            prompt("Manual Copy - Press Ctrl+C then Enter:", cloneCommand);
                             setTimeout(() => resetButton(btn, originalText), 3000);
                         });
                 } else {
                     const msg = response ? response.error : 'Unknown error';
-                    alert(`GitBlitz Failed: ${msg}`);
+                    // Provide helpful error messages
+                    let helpfulMsg = msg;
+                    if (msg.includes('Token')) {
+                        helpfulMsg = `${msg}\n\nPlease open the GitBlitz extension popup and set your GitHub token.`;
+                    } else if (msg.includes('rate limit')) {
+                        helpfulMsg = `${msg}\n\nPlease wait a few minutes before trying again.`;
+                    }
+                    alert(`GitBlitz Failed: ${helpfulMsg}`);
                     resetButton(btn, originalText);
                 }
             });
         } catch (err) {
             console.error(err);
+            alert(`GitBlitz Error: An unexpected error occurred.\n\n${err.message}`);
             resetButton(btn, originalText);
         }
     });
@@ -95,6 +106,59 @@ function resetButton(btn, html) {
     btn.innerHTML = html;
     btn.disabled = false;
 }
+
+function showNotification(message) {
+    // Create a temporary notification element
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background-color: #238636;
+        color: white;
+        padding: 12px 16px;
+        border-radius: 6px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        z-index: 9999;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 14px;
+        animation: slideIn 0.3s ease-out;
+    `;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+
+    // Remove after 3 seconds
+    setTimeout(() => {
+        notification.style.animation = 'slideOut 0.3s ease-in';
+        setTimeout(() => notification.remove(), 300);
+    }, 3000);
+}
+
+// Add animation styles
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes slideIn {
+        from {
+            transform: translateX(100%);
+            opacity: 0;
+        }
+        to {
+            transform: translateX(0);
+            opacity: 1;
+        }
+    }
+    @keyframes slideOut {
+        from {
+            transform: translateX(0);
+            opacity: 1;
+        }
+        to {
+            transform: translateX(100%);
+            opacity: 0;
+        }
+    }
+`;
+document.head.appendChild(style);
 
 // Modern Clipboard API - requires 'clipboardWrite' permission and secure context (HTTPS)
 async function copyToClipboard(text) {

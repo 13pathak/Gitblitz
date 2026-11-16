@@ -10,10 +10,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 });
 
+function checkRateLimit(response) {
+    const remaining = response.headers.get('X-RateLimit-Remaining');
+    const reset = response.headers.get('X-RateLimit-Reset');
+    
+    if (remaining && parseInt(remaining) === 0) {
+        const resetTime = reset ? new Date(parseInt(reset) * 1000).toLocaleTimeString() : 'unknown';
+        throw new Error(`GitHub API rate limit exceeded. Resets at ${resetTime}`);
+    }
+}
+
 async function handleFixRepo(owner, repo) {
-    // 1. Get Token
-    const storage = await chrome.storage.local.get(['githubPat']);
+    // 1. Get Token and Preferences
+    const storage = await chrome.storage.local.get(['githubPat', 'cloneUrlPreference']);
     const token = storage.githubPat;
+    const useSsh = storage.cloneUrlPreference === 'ssh';
 
     if (!token) {
         throw new Error('No GitHub Token found. Please set one in the extension popup.');
@@ -26,7 +37,13 @@ async function handleFixRepo(owner, repo) {
 
     // 2. Get Authenticated User Info (to know who WE are)
     const userRes = await fetch('https://api.github.com/user', { headers });
-    if (!userRes.ok) throw new Error('Failed to fetch user info. Check token.');
+    checkRateLimit(userRes);
+    if (!userRes.ok) {
+        if (userRes.status === 401) {
+            throw new Error('GitHub token is invalid or expired. Please update your token in the extension popup.');
+        }
+        throw new Error('Failed to fetch user info. Check your network connection and token.');
+    }
     const user = await userRes.json();
     const myUsername = user.login;
 
@@ -39,57 +56,62 @@ async function handleFixRepo(owner, repo) {
     if (owner === myUsername) {
         // We are on our own repo. Just return the clone URL.
         // We need to fetch repo details to be sure we get the correct clone URL.
-        return getCloneUrl(owner, repo, headers);
+        return getCloneUrl(owner, repo, headers, useSsh);
     }
 
     const checkRes = await fetch(`https://api.github.com/repos/${myUsername}/${repo}`, { headers });
+    checkRateLimit(checkRes);
 
     if (checkRes.ok) {
         // Fork exists!
         const forkData = await checkRes.json();
-        return forkData.clone_url || forkData.ssh_url;
+        return useSsh ? forkData.ssh_url : forkData.clone_url;
     } else if (checkRes.status === 404) {
         // Fork does not exist. Create it.
-        return await createFork(owner, repo, headers, myUsername);
+        return await createFork(owner, repo, headers, myUsername, useSsh);
     } else {
-        throw new Error(`Error checking for fork: ${checkRes.status}`);
+        throw new Error(`Error checking for fork: ${checkRes.status}. The repository may be private or inaccessible.`);
     }
 }
 
-async function getCloneUrl(owner, repo, headers) {
+async function getCloneUrl(owner, repo, headers, useSsh = false) {
     const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers });
+    checkRateLimit(res);
     if (!res.ok) throw new Error('Failed to get repo details');
     const data = await res.json();
-    return data.clone_url;
+    return useSsh ? data.ssh_url : data.clone_url;
 }
 
-async function createFork(owner, repo, headers, myUsername) {
+async function createFork(owner, repo, headers, myUsername, useSsh = false) {
     const forkUrl = `https://api.github.com/repos/${owner}/${repo}/forks`;
     const res = await fetch(forkUrl, {
         method: 'POST',
         headers: headers
     });
+    checkRateLimit(res);
 
     if (res.status === 202 || res.status === 200) {
         // 202 Accepted = Job queued. We must wait.
-        return await pollForFork(myUsername, repo, headers);
+        return await pollForFork(myUsername, repo, headers, useSsh);
     } else {
         const errData = await res.json();
         throw new Error(`Fork failed: ${errData.message || res.statusText}`);
     }
 }
 
-async function pollForFork(user, repo, headers, attempts = 0) {
+async function pollForFork(user, repo, headers, useSsh = false, attempts = 0) {
     if (attempts > 20) throw new Error('Fork creation timed out.'); // 20 * 1.5s = 30s max
 
     // Wait 1.5s
     await new Promise(resolve => setTimeout(resolve, 1500));
 
     const res = await fetch(`https://api.github.com/repos/${user}/${repo}`, { headers });
+    checkRateLimit(res);
+    
     if (res.ok) {
         const data = await res.json();
-        return data.clone_url;
+        return useSsh ? data.ssh_url : data.clone_url;
     } else {
-        return pollForFork(user, repo, headers, attempts + 1);
+        return pollForFork(user, repo, headers, useSsh, attempts + 1);
     }
 }
