@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GitBlitz Settings</title>
     <link rel="stylesheet" href="popup.css">
+    <link rel="stylesheet" href="options.css">
 </head>
 
 <body>
@@ -15,7 +16,7 @@
             <h1>GitBlitz</h1>
         </header>
         <main>
-            <form id="token-form">
+            <form id="token-form" aria-label="GitHub token">
                 <div class="input-group">
                     <label for="pat-input">GitHub Personal Access Token</label>
                     <p id="token-help" class="help-text">Use a classic token with <code>public_repo</code> for public repositories, or <code>repo</code> for private ones. Your token stays in this browser’s extension storage.</p>
@@ -42,6 +43,11 @@
                 <p id="status-msg" class="status" role="status" aria-atomic="true"></p>
             </form>
 
+            <details class="preferences-section">
+                <summary>Command defaults</summary>
+                <div id="workflow-defaults"></div>
+            </details>
+
             <div class="history-section">
                 <div class="history-header">
                     <h2>Recent Forks</h2>
@@ -55,6 +61,8 @@
             <a href="https://docs.github.com/en/rest/repos/forks#create-a-fork" target="_blank" rel="noopener noreferrer">Fine-grained token permissions</a>
         </footer>
     </div>
+    <script src="workflow.js"></script>
+    <script src="options.js"></script>
     <script src="popup.js"></script>
 </body>
 

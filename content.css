@@ -48,10 +48,28 @@
 }
 
 .gitblitz-btn:focus-visible,
-.gitblitz-feedback :is(button, textarea):focus-visible {
+.gitblitz-feedback :is(button, textarea, a):focus-visible,
+.gitblitz-secondary:focus-visible {
     outline: 2px solid #58a6ff;
     outline-offset: 3px;
 }
+
+.gitblitz-options-panel {
+    box-sizing: border-box; flex: 1 0 100%; width: 100%; min-width: 0; margin-block: 12px;
+}
+.gitblitz-options-panel[hidden], .gitblitz-secondary[hidden] { display: none; }
+.gitblitz-secondary {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-height: 32px; margin: 4px; padding: 5px 10px; white-space: normal;
+    border: 1px solid #8b949e; border-radius: 4px;
+    color: #f0f6fc; background: #21262d; font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    cursor: pointer; text-decoration: none;
+}
+.gitblitz-secondary:hover { color: #ffffff; background: #30363d; text-decoration: none; }
+.gitblitz-secondary:disabled { cursor: wait; opacity: .6; }
+.gitblitz-result-actions { margin-top: 8px; }
+.gitblitz-sync { border-top: 1px solid #8b949e; margin-top: 12px; padding-top: 8px; }
+.gitblitz-sync p { margin: 0 0 8px; }
 
 .gitblitz-feedback {
     clear: both;

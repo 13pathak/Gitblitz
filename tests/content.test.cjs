@@ -13,6 +13,7 @@ function harness(pathname = '/upstream/demo', name = '') {
         },
         window: { location: { pathname } }, MutationObserver: class { observe() {} }
     });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '../workflow.js'), 'utf8'), context);
     vm.runInContext(fs.readFileSync(path.join(__dirname, '../content.js'), 'utf8'), context);
     return context;
 }
@@ -38,10 +39,10 @@ test('builds complete HTTPS and SSH commands, including main and master', () => 
     }
 });
 
-test('never interpolates shell commands or unexpected clone URLs', () => {
+test('quotes shell-special branches and rejects unexpected clone URLs', () => {
     const context = harness();
     for (const branch of ['a;echo-bad', '$(whoami)', '`whoami`', 'a&b', '%PATH%', 'a"b']) {
-        assert.throws(() => context.buildCloneCommand('https://github.com/me/demo.git', branch), /shell-special/);
+        assert.ok(context.buildCloneCommand('https://github.com/me/demo.git', branch).includes(`--branch '${branch}'`));
     }
     assert.throws(() => context.buildCloneCommand('https://example.com/me/demo.git', 'main'), /unexpected clone URL/);
 });

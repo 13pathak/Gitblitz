@@ -1,11 +1,15 @@
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message?.action === 'ACTION_FIX_REPO') {
-        handleFixRepo(message.owner, message.repo, message.ref)
-            .then(data => sendResponse({ success: true, ...data }))
-            .catch(err => sendResponse({ success: false, error: err.message }));
+importScripts('workflow.js');
 
-        return true; // Keep channel open for async
-    }
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    let operation;
+    if (message?.action === 'ACTION_FIX_REPO') operation = handleFixRepo(message.owner, message.repo, message.ref, message.options);
+    if (message?.action === 'GET_WORKFLOW_OPTIONS') operation = getWorkflowOptions();
+    if (message?.action === 'CHECK_FORK_STATUS') operation = handleForkStatus(message.fullName, message.branch);
+    if (message?.action === 'SYNC_FORK') operation = handleForkStatus(message.fullName, message.branch, true);
+    if (!operation) return;
+    operation.then(data => sendResponse({ success: true, ...data }))
+        .catch(err => sendResponse({ success: false, error: err.message }));
+    return true;
 });
 
 chrome.commands.onCommand.addListener(async (command) => {
@@ -57,6 +61,7 @@ async function githubRequest(path, headers, { method = 'GET', body, allowMissing
         if (response.status === 401) {
             throw new Error('GitHub token is invalid or expired. Update it in the GitBlitz popup.');
         }
+        if (response.status === 409) throw new Error('GitHub found a merge conflict. Resolve it on GitHub or locally before syncing again.');
         if (/rate limit/i.test(data.message || '')) {
             throw new Error('GitHub API rate limit reached. Wait at least a minute before trying again.');
         }
@@ -78,33 +83,44 @@ function sameForkNetwork(candidate, upstream) {
         (candidate.fork && (candidate.source?.id === sourceId || candidate.parent?.id === upstream.id))));
 }
 
-async function handleFixRepo(owner, repo, ref = {}) {
-    if (typeof owner !== 'string' || !/^[\w-]+$/.test(owner) ||
-        typeof repo !== 'string' || !/^[\w.-]+$/.test(repo) || repo === '.' || repo === '..') {
-        throw new Error('Open a GitHub repository and try again.');
-    }
-    const storage = await chrome.storage.local.get(['githubPat', 'cloneUrlPreference']);
-    const token = storage.githubPat;
-    const useSsh = storage.cloneUrlPreference === 'ssh';
-    if (!token) {
-        throw new Error('No GitHub token found. Open the GitBlitz popup to save a token.');
-    }
-    const headers = {
+function apiHeaders(token) {
+    if (!token) throw new Error('No GitHub token found. Open the GitBlitz popup to save a token.');
+    return {
         'Authorization': `Bearer ${token}`,
         'Accept': 'application/vnd.github+json',
         'Content-Type': 'application/json',
         'X-GitHub-Api-Version': '2022-11-28'
     };
+}
+
+async function getWorkflowOptions() {
+    const storage = await chrome.storage.local.get(['workflowOptions']);
+    return { options: GitBlitz.options(storage.workflowOptions) };
+}
+
+async function handleFixRepo(owner, repo, ref = {}, overrides = {}) {
+    if (typeof owner !== 'string' || !/^[\w-]+$/.test(owner) ||
+        typeof repo !== 'string' || !/^[\w.-]+$/.test(repo) || repo === '.' || repo === '..') {
+        throw new Error('Open a GitHub repository and try again.');
+    }
+    const storage = await chrome.storage.local.get(['githubPat', 'cloneUrlPreference', 'workflowOptions']);
+    const settings = GitBlitz.options({ ...storage.workflowOptions, ...overrides });
+    const headers = apiHeaders(storage.githubPat);
+    const useSsh = storage.cloneUrlPreference === 'ssh';
     const user = await githubRequest('/user', headers);
     const upstream = await githubRequest(repositoryPath(`${owner}/${repo}`), headers);
     const branch = await resolveBranch(upstream, ref, headers);
+    const destination = settings.organization || user.login;
+    const targetName = settings.forkName || upstream.name;
+    // Validate command choices before creating a repository.
+    GitBlitz.buildCommand({ cloneUrl: upstream.clone_url, branch, directory: targetName }, settings);
     let target = upstream;
-    if (upstream.owner.login.toLowerCase() !== user.login.toLowerCase()) {
-        target = await githubRequest(repositoryPath(`${user.login}/${upstream.name}`), headers, { allowMissing: true });
+    if (upstream.full_name.toLowerCase() !== `${destination}/${targetName}`.toLowerCase()) {
+        target = await githubRequest(repositoryPath(`${destination}/${targetName}`), headers, { allowMissing: true });
         if (target && !sameForkNetwork(target, upstream)) {
-            throw new Error(`${target.full_name} already exists and is unrelated to ${upstream.full_name}. Rename that repository or create a differently named fork on GitHub, then open your fork.`);
+            throw new Error(`${target.full_name} already exists and is unrelated to ${upstream.full_name}. Choose a different fork name in GitBlitz options.`);
         }
-        if (!target) target = await createFork(upstream, headers, branch);
+        if (!target) target = await createFork(upstream, headers, branch, settings);
     }
     if (branch && target.id !== upstream.id) {
         const targetBranch = await githubRequest(`${repositoryPath(target.full_name)}/branches/${encodeURIComponent(branch)}`, headers, { allowMissing: true });
@@ -112,7 +128,18 @@ async function handleFixRepo(owner, repo, ref = {}) {
             throw new Error(`The branch "${branch}" is missing from ${target.full_name}. Sync that branch to your fork, then try again.`);
         }
     }
-    return { cloneUrl: useSsh ? target.ssh_url : target.clone_url, branch };
+    const contributionUpstream = target.id === upstream.id && upstream.fork ? upstream.parent : upstream;
+    const recipe = {
+        cloneUrl: useSsh ? target.ssh_url : target.clone_url,
+        upstreamUrl: useSsh ? contributionUpstream?.ssh_url : contributionUpstream?.clone_url,
+        branch,
+        directory: target.name,
+        fullName: target.full_name,
+        isFork: Boolean(target.fork),
+        syncBranch: branch || target.default_branch,
+        options: settings
+    };
+    return { ...recipe, command: GitBlitz.buildCommand(recipe, settings) };
 }
 
 async function resolveBranch(upstream, ref, headers) {
@@ -135,10 +162,12 @@ async function resolveBranch(upstream, ref, headers) {
     throw new Error('Could not identify a branch on this page. Select a branch on the repository’s Code tab and try again.');
 }
 
-async function createFork(upstream, headers, branch = null) {
+async function createFork(upstream, headers, branch = null, settings = {}) {
     const fork = await githubRequest(`${repositoryPath(upstream.full_name)}/forks`, headers, {
         method: 'POST',
-        body: { default_branch_only: false }
+        body: { default_branch_only: false,
+            ...(settings.forkName ? { name: settings.forkName } : {}),
+            ...(settings.organization ? { organization: settings.organization } : {}) }
     });
     if (!fork.full_name) throw new Error('GitHub did not return the fork location. Please try again.');
     const readyFork = await pollForFork(fork.full_name, upstream, headers, branch);
@@ -149,6 +178,32 @@ async function createFork(upstream, headers, branch = null) {
         // The clone command is still available when local history cannot be saved.
     }
     return readyFork;
+}
+
+async function handleForkStatus(fullName, branch, sync = false) {
+    if (typeof fullName !== 'string' || !/^[\w-]+\/[\w.-]+$/.test(fullName) || !GitBlitz.validBranch(branch)) {
+        throw new Error('Choose a repository and valid branch before checking sync status.');
+    }
+    const storage = await chrome.storage.local.get(['githubPat']);
+    const headers = apiHeaders(storage.githubPat);
+    const fork = await githubRequest(repositoryPath(fullName), headers);
+    if (!fork.fork || !fork.parent?.full_name) throw new Error('This repository is not a fork with an accessible upstream.');
+    const upstream = fork.parent.full_name;
+    // Compare exact commit IDs so differently named forks and slash-containing
+    // branches work without the ambiguity of owner:branch comparison syntax.
+    const localBranch = await githubRequest(`${repositoryPath(fullName)}/branches/${encodeURIComponent(branch)}`, headers);
+    const upstreamBranch = await githubRequest(`${repositoryPath(upstream)}/branches/${encodeURIComponent(branch)}`, headers, { allowMissing: true });
+    if (!upstreamBranch) throw new Error(`The branch "${branch}" does not exist in ${upstream}. Select a shared branch to sync.`);
+    const comparePath = `${repositoryPath(upstream)}/compare/${encodeURIComponent(upstreamBranch.commit.sha)}...${encodeURIComponent(localBranch.commit.sha)}`;
+    const comparison = await githubRequest(comparePath, headers);
+    const status = { fullName, branch, upstream, ahead: comparison.ahead_by, behind: comparison.behind_by, canSync: fork.permissions?.push === true };
+    if (!sync) return status;
+    if (!status.canSync) throw new Error('Your token needs write access to this fork to sync it.');
+    if (status.ahead > 0 && status.behind > 0) throw new Error('This branch has diverged from upstream. Review and merge the changes on GitHub or locally.');
+    if (status.behind === 0) return { ...status, synced: false };
+    await githubRequest(`${repositoryPath(fullName)}/merge-upstream`, headers, { method: 'POST', body: { branch } });
+    // Re-read rather than assuming the remote is unchanged after a merge.
+    return { ...await handleForkStatus(fullName, branch), synced: true };
 }
 
 async function addToForkHistory(originalRepo, forkRepo) {

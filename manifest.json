@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GitBlitz",
-  "version": "1.1",
+  "version": "1.2.0",
   "description": "Create or reuse a GitHub fork and copy its clone command.",
   "permissions": [
     "storage",
@@ -39,9 +39,12 @@
         "https://github.com/*"
       ],
       "js": [
+        "workflow.js",
+        "options.js",
         "content.js"
       ],
       "css": [
+        "options.css",
         "content.css"
       ]
     }

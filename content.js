@@ -1,8 +1,10 @@
 const BUTTON_ID = 'gitblitz-fix-btn';
-const BUTTON_LABEL = 'Fork & Copy Clone Command';
+const BUTTON_LABEL = 'Fork & Copy Command';
 let working = false;
 let scheduledInjection = false;
 let lastAnnouncement = '';
+let optionsRepository = '';
+let pageOptions;
 
 chrome.runtime.onMessage.addListener((message) => {
     if (message?.action === 'TRIGGER_FIX_REPO') {
@@ -34,7 +36,17 @@ function findActionList() {
 }
 
 function injectButton() {
-    if (!repositoryContext() || document.getElementById(BUTTON_ID)) return;
+    const context = repositoryContext();
+    if (!context) return;
+    const key = `${context.owner}/${context.repo}`.toLowerCase();
+    if (optionsRepository !== key) {
+        optionsRepository = key;
+        pageOptions = undefined;
+        document.getElementById('gitblitz-options')?.remove();
+        document.getElementById('gitblitz-feedback')?.remove();
+        document.getElementById('gitblitz-options-toggle')?.setAttribute('aria-expanded', 'false');
+    }
+    if (document.getElementById(BUTTON_ID)) return;
     const actionList = findActionList();
     if (!actionList) return;
 
@@ -47,8 +59,56 @@ function injectButton() {
     button.setAttribute('aria-disabled', String(working));
     button.addEventListener('click', handleClick);
     item.appendChild(button);
+    const optionsButton = document.createElement('button');
+    optionsButton.id = 'gitblitz-options-toggle';
+    optionsButton.type = 'button';
+    optionsButton.className = 'gitblitz-secondary btn-sm btn';
+    optionsButton.textContent = 'GitBlitz options';
+    optionsButton.setAttribute('aria-expanded', 'false');
+    optionsButton.setAttribute('aria-controls', 'gitblitz-options');
+    optionsButton.addEventListener('click', toggleOptions);
+    item.appendChild(optionsButton);
     actionList.insertBefore(item, actionList.firstChild);
     ensureFeedback(actionList);
+}
+
+async function toggleOptions() {
+    injectButton();
+    const toggle = document.getElementById('gitblitz-options-toggle');
+    let panel = document.getElementById('gitblitz-options');
+    if (!panel) {
+        const context = repositoryContext();
+        const key = `${context.owner}/${context.repo}`.toLowerCase();
+        toggle.disabled = true;
+        try {
+            const response = await chrome.runtime.sendMessage({ action: 'GET_WORKFLOW_OPTIONS' });
+            if (!response?.success) throw new Error(response?.error || 'Could not load options.');
+            const current = repositoryContext();
+            if (key !== `${current?.owner}/${current?.repo}`.toLowerCase()) return;
+            panel = document.createElement('div');
+            panel.id = 'gitblitz-options';
+            panel.className = 'gitblitz-options-panel';
+            panel.appendChild(GitBlitzForms.create({
+                id: 'gitblitz-recipe', values: pageOptions || response.options,
+                repositoryOptions: true, submitLabel: 'Prepare & copy command',
+                onSubmit: async values => {
+                    const current = repositoryContext();
+                    if (key !== `${current?.owner}/${current?.repo}`.toLowerCase()) throw new Error('The repository changed. Reopen GitBlitz options.');
+                    pageOptions = values;
+                    await prepareRepository(document.getElementById(BUTTON_ID), values);
+                }
+            }));
+            ensureFeedback().insertAdjacentElement('beforebegin', panel);
+        } catch (error) {
+            showFeedback(error.message, 'error');
+            return;
+        } finally {
+            toggle.disabled = false;
+        }
+    } else {
+        panel.hidden = !panel.hidden;
+    }
+    toggle.setAttribute('aria-expanded', String(!panel.hidden));
 }
 
 function ensureFeedback(actionList = findActionList()) {
@@ -89,7 +149,7 @@ function showFeedback(message, type = 'success', command = '') {
     if (command) {
         const label = document.createElement('label');
         label.htmlFor = 'gitblitz-command';
-        label.textContent = 'Clone command';
+        label.textContent = 'Terminal command';
         const field = document.createElement('textarea');
         field.id = 'gitblitz-command';
         field.className = 'gitblitz-command';
@@ -112,41 +172,108 @@ function showFeedback(message, type = 'success', command = '') {
     details.appendChild(dismiss);
 }
 
-function buildCloneCommand(cloneUrl, branch) {
-    if (typeof cloneUrl !== 'string' || !/^(https:\/\/github\.com\/|git@github\.com:)[\w.-]+\/[\w.-]+\.git$/.test(cloneUrl)) {
-        throw new Error('GitHub returned an unexpected clone URL. Open your fork on GitHub and copy its URL.');
-    }
-    // Keep copied commands safe in PowerShell, cmd.exe and POSIX shells.
-    // Unusual shell metacharacters must never become executable pasted input.
-    if (branch && !/^[\p{L}\p{N}._\/-]+$/u.test(branch)) {
-        throw new Error('This branch name contains shell-special characters. Copy its clone command from GitHub and quote the branch for your terminal.');
-    }
-    return `git clone${branch ? ` --branch ${branch}` : ''} -- ${cloneUrl}`;
+function buildCloneCommand(cloneUrl, branch, options = {}) {
+    return GitBlitz.buildCommand({ cloneUrl, branch }, options);
+}
+
+function addResultActions(recipe) {
+    const pagePath = window.location.pathname;
+    const details = document.getElementById('gitblitz-details');
+    if (!details) return;
+    const actions = document.createElement('div');
+    actions.className = 'gitblitz-result-actions';
+    const editor = document.createElement('a');
+    editor.id = 'gitblitz-vscode';
+    editor.className = 'gitblitz-secondary';
+    editor.href = GitBlitz.vscodeUrl(recipe.cloneUrl, recipe.branch);
+    editor.textContent = 'Clone in VS Code';
+    actions.appendChild(editor);
+    const note = document.createElement('p');
+    note.className = 'gitblitz-hint';
+    note.textContent = 'VS Code asks where to clone. Use the terminal command for contribution setup and history presets.';
+    details.append(actions, note);
+    if (!recipe.isFork || !recipe.fullName || !recipe.syncBranch) return;
+    const section = document.createElement('div');
+    section.className = 'gitblitz-sync';
+    const status = document.createElement('p');
+    status.id = 'gitblitz-sync-status';
+    status.setAttribute('role', 'status');
+    const check = document.createElement('button');
+    check.type = 'button';
+    check.className = 'gitblitz-secondary';
+    check.textContent = 'Refresh fork status';
+    const sync = document.createElement('button');
+    sync.type = 'button';
+    sync.id = 'gitblitz-sync';
+    sync.className = 'gitblitz-secondary';
+    sync.hidden = true;
+    let pending = false;
+    const update = async (mutate = false) => {
+        if (pending || window.location.pathname !== pagePath) return;
+        pending = true;
+        check.disabled = true;
+        sync.disabled = true;
+        try {
+            const result = await chrome.runtime.sendMessage({ action: mutate ? 'SYNC_FORK' : 'CHECK_FORK_STATUS', fullName: recipe.fullName, branch: recipe.syncBranch });
+            if (!section.isConnected) return;
+            if (!result?.success) throw new Error(result?.error || 'Could not check fork status.');
+            status.textContent = `${result.synced ? 'Sync finished. ' : ''}${recipe.fullName} · ${recipe.syncBranch}: ${result.behind} behind, ${result.ahead} ahead of ${result.upstream}.`;
+            sync.hidden = !(result.canSync && result.behind > 0 && result.ahead === 0);
+            sync.textContent = `Sync ${recipe.fullName} · ${recipe.syncBranch}`;
+            if (result.ahead > 0 && result.behind > 0) status.textContent += ' Review the diverged branches on GitHub before merging.';
+            else if (!result.canSync && result.behind > 0) status.textContent += ' Write access is required to sync.';
+        } catch (error) {
+            status.textContent = error.message;
+            sync.hidden = true;
+        } finally {
+            pending = false;
+            check.disabled = false;
+            sync.disabled = false;
+        }
+    };
+    check.addEventListener('click', () => update());
+    sync.addEventListener('click', () => update(true));
+    section.append(status, check, sync);
+    details.appendChild(section);
+    void update();
 }
 
 async function handleClick(event) {
     event.preventDefault();
+    if (working) return;
+    injectButton();
+    const form = document.getElementById('gitblitz-recipe');
+    let overrides = pageOptions;
+    if (form && !form.parentElement.hidden) {
+        overrides = GitBlitzForms.read(form);
+        if (!overrides) return;
+        pageOptions = overrides;
+    }
+    await prepareRepository(event.currentTarget, overrides);
+}
+
+async function prepareRepository(button, options) {
     if (working) return;
     // Capture repository and ref together before any asynchronous work or navigation.
     const context = repositoryContext();
     if (!context) return;
     const pagePath = window.location.pathname;
     working = true;
-    const button = event.currentTarget;
     button.textContent = 'Preparing repository…';
     button.setAttribute('aria-disabled', 'true');
     button.setAttribute('aria-busy', 'true');
     try {
-        const response = await chrome.runtime.sendMessage({ action: 'ACTION_FIX_REPO', ...context });
+        const response = await chrome.runtime.sendMessage({ action: 'ACTION_FIX_REPO', ...context, options });
         if (!response?.success) throw new Error(response?.error || 'GitBlitz did not receive a response. Reload this page and try again.');
         if (window.location.pathname !== pagePath) return;
-        const command = buildCloneCommand(response.cloneUrl, response.branch);
+        const command = response.command || buildCloneCommand(response.cloneUrl, response.branch);
         try {
             await navigator.clipboard.writeText(command);
-            showFeedback('Clone command copied.', 'success', command);
+            showFeedback(response.options?.mode === 'contribute' ? 'Contribution setup command copied.' : 'Clone command copied.', 'success', command);
         } catch {
             showFeedback('Clipboard access failed. Select the command below and copy it manually.', 'error', command);
         }
+        addResultActions(response);
     } catch (error) {
         if (window.location.pathname === pagePath) {
             showFeedback(error.message || 'GitBlitz could not prepare this repository. Reload the page and try again.', 'error');

@@ -9,7 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const forkHistoryList = document.getElementById('fork-history');
 
     // Load saved settings
-    chrome.storage.local.get(['githubPat', 'githubUsername', 'cloneUrlPreference', 'forkHistory'], (result) => {
+    chrome.storage.local.get(['githubPat', 'githubUsername', 'cloneUrlPreference', 'forkHistory', 'workflowOptions'], (result) => {
         if (result.githubPat) {
             patInput.value = result.githubPat;
             if (result.githubUsername) {
@@ -25,6 +25,17 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
         displayForkHistory(result.forkHistory || []);
+        const defaultsForm = GitBlitzForms.create({
+            id: 'gitblitz-defaults', values: result.workflowOptions,
+            onSubmit: values => new Promise((resolve, reject) => {
+                // Fork names and destinations are always chosen per repository.
+                chrome.storage.local.set({ workflowOptions: { ...values, forkName: '', organization: '' } }, () => {
+                    if (chrome.runtime.lastError) reject(new Error('Could not save command defaults. Try again.'));
+                    else resolve();
+                });
+            })
+        });
+        document.getElementById('workflow-defaults').appendChild(defaultsForm);
     });
 
     // Save settings with validation

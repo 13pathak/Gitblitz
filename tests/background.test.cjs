@@ -22,6 +22,7 @@ function harness(responses, storage = {}) {
     const queue = [...responses];
     const context = vm.createContext({
         AbortSignal,
+        importScripts(file) { vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context); },
         setTimeout(resolve) { resolve(); },
         chrome: {
             runtime: { onMessage: { addListener() {} } },
@@ -190,4 +191,90 @@ test('missing token fails before any network request', async () => {
     const h = harness([], { githubPat: '' });
     await assert.rejects(h.context.handleFixRepo('upstream', 'demo'), /No GitHub token/);
     assert.equal(h.requests.length, 0);
+});
+
+test('custom fork names and organization destinations are sent to GitHub', async () => {
+    const organizationFork = { ...fork, name: 'demo-custom', full_name: 'team/demo-custom', owner: { login: 'team' }, clone_url: 'https://github.com/team/demo-custom.git' };
+    const h = harness([userResponse, upstreamResponse,
+        { path: '/repos/team/demo-custom', status: 404 },
+        { path: '/repos/upstream/demo/forks', method: 'POST', status: 202, data: organizationFork },
+        { path: '/repos/team/demo-custom', data: organizationFork },
+        { path: '/repos/team/demo-custom/branches/main', data: { name: 'main' } }
+    ]);
+    const result = await h.context.handleFixRepo('upstream', 'demo', {}, { organization: 'team', forkName: 'demo-custom', mode: 'contribute', featureBranch: 'fix/issue' });
+    const body = JSON.parse(h.requests.find(request => request.method === 'POST').body);
+    assert.deepEqual(body, { default_branch_only: false, name: 'demo-custom', organization: 'team' });
+    assert.match(result.command, /team\/demo-custom.git \.\/demo-custom/);
+    assert.match(result.command, /remote add upstream https:\/\/github.com\/upstream\/demo.git/);
+    assert.match(result.command, /switch -c fix\/issue/);
+});
+
+test('reuses a correctly named organization fork without another POST', async () => {
+    const h = harness([userResponse, upstreamResponse, { path: '/repos/team/demo-custom', data: { ...fork, name: 'demo-custom', full_name: 'team/demo-custom' } }]);
+    await h.context.handleFixRepo('upstream', 'demo', {}, { organization: 'team', forkName: 'demo-custom' });
+    assert.ok(h.requests.every(request => request.method === 'GET'));
+});
+
+test('invalid workflow input fails before making requests', async () => {
+    const h = harness([]);
+    await assert.rejects(h.context.handleFixRepo('upstream', 'demo', {}, { mode: 'contribute', featureBranch: 'bad branch' }), /valid new branch/);
+    await assert.rejects(h.context.handleFixRepo('upstream', 'demo', {}, { organization: '../bad' }), /organization login/);
+    assert.equal(h.requests.length, 0);
+});
+
+test('saved preferences apply unless overridden for this repository', async () => {
+    const h = harness([userResponse, upstreamResponse, forkResponse], { workflowOptions: { shell: 'powershell', mode: 'contribute', preset: 'shallow', featureBranch: 'fix/saved' } });
+    const result = await h.context.handleFixRepo('upstream', 'demo', {}, { preset: 'single' });
+    assert.match(result.command, /--single-branch/);
+    assert.doesNotMatch(result.command, /--depth/);
+    assert.match(result.command, /if \(\$LASTEXITCODE -eq 0\)/);
+    assert.match(result.command, /switch -c fix\/saved/);
+});
+
+function syncResponses({ ahead = 0, behind = 3, canSync = true } = {}) {
+    return [
+        { path: '/repos/me/demo', data: { ...fork, parent: { id: 10, full_name: 'upstream/demo' }, permissions: { push: canSync } } },
+        { path: '/repos/me/demo/branches/feature%2Flogin', data: { commit: { sha: 'fork-sha' } } },
+        { path: '/repos/upstream/demo/branches/feature%2Flogin', data: { commit: { sha: 'upstream-sha' } } },
+        { path: '/repos/upstream/demo/compare/upstream-sha...fork-sha', data: { ahead_by: ahead, behind_by: behind } }
+    ];
+}
+
+test('fork status reports ahead/behind counts relative to the direct parent without writes', async () => {
+    const h = harness(syncResponses({ ahead: 2, behind: 3 }));
+    const result = await h.context.handleForkStatus('me/demo', 'feature/login');
+    assert.equal(result.ahead, 2);
+    assert.equal(result.behind, 3);
+    assert.equal(result.upstream, 'upstream/demo');
+    assert.ok(h.requests.every(request => request.method === 'GET'));
+});
+
+test('explicit sync revalidates status, updates the named branch and rechecks results', async () => {
+    const h = harness([...syncResponses(), { path: '/repos/me/demo/merge-upstream', method: 'POST', data: { merge_type: 'fast-forward' } }, ...syncResponses({ behind: 0 })]);
+    const result = await h.context.handleForkStatus('me/demo', 'feature/login', true);
+    assert.equal(result.synced, true);
+    assert.equal(result.behind, 0);
+    assert.deepEqual(JSON.parse(h.requests.find(request => request.method === 'POST').body), { branch: 'feature/login' });
+    assert.ok(h.requests.every(request => request.method !== 'PATCH'));
+});
+
+test('sync refuses diverged or read-only forks without mutating them', async () => {
+    for (const options of [{ ahead: 2, behind: 3 }, { canSync: false }]) {
+        const h = harness(syncResponses(options));
+        await assert.rejects(h.context.handleForkStatus('me/demo', 'feature/login', true), /diverged|write access/);
+        assert.equal(h.requests.length, 4);
+    }
+});
+
+test('sync is a no-op when the fork is up to date or ahead', async () => {
+    const h = harness(syncResponses({ ahead: 2, behind: 0 }));
+    const result = await h.context.handleForkStatus('me/demo', 'feature/login', true);
+    assert.equal(result.synced, false);
+    assert.ok(h.requests.every(request => request.method === 'GET'));
+});
+
+test('merge conflicts surface an actionable error without force updating refs', async () => {
+    const h = harness([...syncResponses(), { path: '/repos/me/demo/merge-upstream', method: 'POST', status: 409 }]);
+    await assert.rejects(h.context.handleForkStatus('me/demo', 'feature/login', true), /merge conflict/);
+    assert.equal(h.requests.length, 5);
 });

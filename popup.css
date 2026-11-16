@@ -69,10 +69,14 @@ legend {
     line-height: 1.5;
 }
 
-:is(button, a, input):focus-visible {
+:is(button, a, input, summary):focus-visible {
     outline: 2px solid #58a6ff;
     outline-offset: 3px;
 }
+
+.preferences-section { margin-top: 16px; }
+.preferences-section summary { min-height: 24px; color: #58a6ff; cursor: pointer; }
+.preferences-section .gitblitz-options-form { margin-top: 12px; padding: 12px; }
 
 input[type="password"] {
     background-color: #010409;

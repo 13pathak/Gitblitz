@@ -1,10 +1,10 @@
 {
   "name": "gitblitz",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "scripts": {
-    "test": "node --test tests/background.test.cjs tests/content.test.cjs",
-    "test:browser": "node tests/browser-check.cjs"
+    "test": "node --test tests/*.test.cjs",
+    "test:browser": "node tests/browser-check.cjs && node tests/features-browser.cjs"
   },
   "engines": {
     "node": ">=20"
